@@ -1,0 +1,1265 @@
+---
+title: "Apatite & Zircon Nano-CT"
+subtitle: "Statistics & Plotting"
+author: "Spencer Zeigler"
+date: "`r format(Sys.Date(), '%d-%m-%Y')`"
+output:
+  pdf_document:
+    df_print: kable
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    highlight: tango
+  html_document: 
+    df_print: paged
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    highlight: tango
+    theme: yeti
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+# packages
+library(tidyverse) # general data wrangling and plotting
+library(broom) # Convert Statistical Objects into Tidy Tibbles
+library(patchwork) # The Composer of Plots
+library(latex2exp) # Use LaTeX Expressions in Plots
+
+# scripts
+source("scripts/ggplot-themes.R")
+
+# global knitting options for code rendering
+knitr::opts_chunk$set(echo = FALSE, 
+                      message = FALSE, 
+                      warning = FALSE)
+
+# theme setting
+theme_set(theme_light())
+theme_update(plot.title = element_text(hjust = 0)) #adjusts theme so that all titles are centered
+theme_update(plot.subtitle= element_text(hjust = 0)) #adjusts subtitle so they are all centered
+options(scipen = 10000000) #prints numbers instead of scientific notation
+
+# colors
+apatite_geo_cols <- c("#2D728F","#D5920B")
+zircon_geo_cols <- c("#517048", "#C84167")
+
+# percent diff lines
+pd_ft <- read_csv("data/percent_difference_ft.csv")
+pd_v <- read_csv("data/percent_difference_vol.csv")
+```
+
+# Loading Data
+
+```{r load data}
+apatite_raw <- readxl::read_xlsx("data/20220704_apatite-data.xlsx") #read in raw data
+
+# select columns needed for analysis, mutate to create a column on which i can filter out grains with 2D Ft < 0.5, remove three grains unsuitable for analysis (termination ends & an accidental zircon), change name of size_cat from 'average' or 'small' to 'medium', and convert some columns to factors
+
+apatite <- apatite_raw |> 
+  select(id, sample, gem, gc, ri, np_obs, np_num_obs, geo, size_cat, ft238_max, ft238_3d, ft232_max, ft232_3d, ft235_max, ft235_3d, ft147_max, ft147_3d, ftcomb_max, ftcomb_3d, v_max, v_3d, rft_max, rft_3d, sa_max, sa_3d, w_max, l_avg, w_min, grain) |>  
+  filter(ftcomb_max > 0.5 & ftcomb_3d > 0.5) |> 
+  filter(sample != "DCA,1a,1" & sample != "15MFS07,5b,2" & sample != "FCT,2a4,4") |> 
+  mutate(size_cat = stringr::str_replace(size_cat, "average|small", "medium"), 
+         axial_ratio = w_max/w_min) |> 
+  mutate_at(c("gem", "gc", "ri", "size_cat", "geo"), factor)
+
+
+zircon_raw <- readxl::read_xlsx("data/20220704_zircon-data.xlsx") #read in raw data
+
+# select columns needed for analysis and convert some columns to factors 
+
+zircon <- zircon_raw |> 
+  select(id, sample, gem, gc, ci, np_obs, np_num_obs, geo, size_cat, ft238_both, ft238_3d,  ft232_both, ft232_3d,  ft235_both, ft235_3d, ft147_both, ft147_3d, ftcomb_both, ftcomb_3d, v_both, v_3d, rft_both, rft_3d, sa_both, sa_3d, w_max, w_min, w_avg, l_avg, grain) |> 
+  filter(ftcomb_both > 0.5 & ftcomb_3d > 0.5) |> 
+  mutate_at(c("gem", "gc", "ci", "size_cat", "geo"), factor) |> 
+  mutate(size_cat = stringr::str_replace(size_cat, "average|small", "medium"), 
+         axial_ratio = w_max/w_min) |> 
+ filter(sample != "RGD17-21_1_2" & sample != "CP06-70_1_6" & sample != "PP4_5_4") # outlier on SA plots; outlier on volume residual plot; outlier on volume regression plot
+```
+
+# Linear regressions: Correction
+
+```{r ap regressions}
+apatite_regressions <- apatite |> 
+  select(id, sample, grain, geo, ri, gc, np_obs, gem, size_cat, w_max, ft238_max, ft238_3d,  ft232_max, ft232_3d, ft235_max, ft235_3d, ft147_max, ft147_3d, ftcomb_max, ftcomb_3d, v_3d, v_max, rft_max, rft_3d) |> 
+  pivot_longer(ft238_max:rft_3d) |> 
+  separate(name, into = c("parameter", "split"), sep = "_", remove = TRUE) |> 
+  pivot_wider(names_from = split, values_from = value) |> # makes two columns-- '3D' and 'max'
+  rename(`2d` = max) |> 
+  group_split(geo, parameter, grain) |> # creates list of tibbles grouped by geo, parameter 
+  map_dfr(~bind_cols(select(.x, ri, gc, np_obs, gem, size_cat, w_max, id, geo, parameter, grain, sample), 
+                     augment(lm(`2d` ~ 0 + `3d`, data = .x)), 
+                     tidy(lm(`2d` ~ 0 + `3d`, data = .x)), .id = "id")) |> 
+  select(estimate, .resid, ri:`3d`, geo, parameter, grain, sample) |> 
+  rename(residuals = .resid) |> 
+    mutate(pdiff = residuals/`2d` * 100)
+
+apatite_regressions <- arrange(apatite_regressions, parameter, geo)
+
+apatite_regressions$parameter = factor(apatite_regressions$parameter, levels = c("ftcomb", "ft238", "ft235", "ft232", "ft147", "v", "rft"))
+apatite_regressions$geo = factor(apatite_regressions$geo, levels = c("hexagonal", "ellipsoid"))
+
+
+# select columns we need for analysis
+# pivot longer so column names are now in a single column and all the values are in another column 
+# split column names so that the parameter (ft, v, rs) are separate from the measurement type (3d, 2d)
+# pivot wider so two new columns are made (2d, 3d) with the corresponding values
+# rename "max" to "2d"
+# create a list of tibbles split by the geometry and the parameter 
+# run a regression on each tibble (ie. on each combination of geometry and parameter). bind together the results of selecting columns i want to keep, running a regression and selecting parameters with 'augment' and running a regressions and selecting parameters from 'tidy'. 
+# tidy and augment produce more than i want, so i select only the columns i care about 
+# do some simple renaming
+# turn residuals into a percent difference 
+
+# arrange dataframe by parameter and within each parameter, arrange by geo (for plotting)
+```
+
+```{r zirc regressions}
+zircon_regressions <- zircon |> 
+  select(id, grain, geo, ci, gc, np_obs, gem, size_cat, w_max, w_avg, ft238_both, ft238_3d, v_3d, v_both,  ft232_both, ft232_3d, ft235_both, ft235_3d, ft147_both, ft147_3d, ftcomb_both, ftcomb_3d, rft_both, rft_3d) |>
+  pivot_longer(ft238_both:rft_3d) |> 
+  separate(name, into = c("parameter", "split"), sep = "_", remove = TRUE) |> 
+  pivot_wider(names_from = split, values_from = value) |> 
+  rename(`2d` = both) |>
+  group_split(geo, parameter, grain) |> 
+  map_dfr(~bind_cols(select(.x, ci, gc, np_obs, gem, size_cat, w_max, w_avg, id, geo, parameter, grain), 
+                     augment(lm(`2d` ~ 0 + `3d`, data = .x)), 
+                     tidy(lm(`2d` ~ 0 + `3d`, data = .x)), .id = "id")) |> 
+  select(estimate, .resid, ci:`3d`, geo, parameter, grain) |> 
+  rename(residuals = .resid) |> 
+    mutate(pdiff = residuals/`2d` * 100)
+
+zircon_regressions <- arrange(zircon_regressions, parameter, geo)
+
+zircon_regressions$parameter = factor(zircon_regressions$parameter, levels = c("ftcomb", "ft238", "ft235", "ft232", "ft147", "v", "rft"))
+zircon_regressions$geo = factor(zircon_regressions$geo, levels = c("tetragonal", "ellipsoid"))
+
+# same thing as above
+```
+
+# Print regression results
+
+```{r print regressions}
+apatite_regressions |> 
+  select(parameter, geo, estimate) |> 
+  pivot_wider(names_from = geo, values_from = estimate, values_fn = mean) |>
+  knitr::kable(digits = 2, caption = "Apatite regression values.") |> 
+  kableExtra::kable_styling(full_width = FALSE, latex_options = "HOLD_position")
+
+zircon_regressions |> 
+  select(parameter, geo, estimate) |> 
+  pivot_wider(names_from = geo, values_from = estimate, values_fn = mean) |> 
+knitr::kable(digits = 2, caption = "Zircon regression values.") |>
+  kableExtra::kable_styling(full_width = FALSE, latex_options = "HOLD_position")
+```
+
+
+# Plot regression 
+
+## Apatite 
+
+Volume 
+
+```{r volume}
+pva_zoomed <- apatite_regressions |> 
+  filter(parameter == "v") |> 
+  mutate(`2d_new` = `2d`/100000, 
+         `3d_new` = `3d`/100000) |>
+  arrange(geo) |> 
+  ggplot(aes(x = `2d_new`, y = `3d_new`, color = geo)) +
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 2, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_color_manual(values = apatite_geo_cols,
+                     breaks = c("hexagonal", "ellipsoid"), 
+                     labels = c("Hexagonal", "Ellipsoid")) +
+  coord_cartesian(xlim = c(0,15), ylim = c(0, 15)) +
+  scale_x_continuous(breaks = seq(0, 15, 3)) +
+  scale_y_continuous(breaks = seq(0, 15, 3)) +
+  labs(x = TeX("2D Volume ($\\cdot 10^5$ $\\mu m^3$)"), 
+       y= TeX("3D Volume ($\\cdot 10^5$ $\\mu m^3$)")) +
+  theme_nanoct()
+
+pva_full <- apatite_regressions |> 
+  filter(parameter == "v") |> 
+  mutate(`2d_new` = `2d`/100000, 
+         `3d_new` = `3d`/100000) |>
+  arrange(geo) |> 
+  ggplot(aes(x = `2d_new`, y = `3d_new`, color = geo)) +
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 1, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_color_manual(values = apatite_geo_cols,
+                     breaks = c("hexagonal", "ellipsoid"), 
+                     labels = c("Hexagonal", "Ellipsoid")) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "none", 
+        plot.title = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks.length = unit(-0.15, "cm"),
+        axis.ticks = element_line(color = "black"),
+        axis.text = element_text(size = 7),
+        panel.border = element_rect(size = 1, color = "black")) +
+  annotate('rect', xmin = 0, ymin = 0, xmax = 15, ymax = 15, size = 0.5, fill = 'transparent', color = "black") +
+  coord_cartesian(xlim = c(0,50), ylim = c(0, 50)) +
+  scale_x_continuous(breaks = seq(0, 50, 15)) +
+  scale_y_continuous(breaks = seq(0, 50, 15)) 
+
+pva <- pva_zoomed + inset_element(pva_full, 
+                          left = 0.01, 
+                          bottom = 0.57, 
+                          right = 0.42, 
+                          top = 0.99)
+pva
+```
+
+Mean Ft
+
+```{r meanft}
+pftcomba <- apatite_regressions |> 
+  filter(parameter == "ftcomb") |> 
+  arrange(geo) |> 
+  ggplot(aes(x = `2d`, y = `3d`, color = geo)) +
+  geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 2, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_x_continuous(limits = c(0.47, 0.87),
+                     expand = c(0.0, 0.0),
+                     breaks = c(0.5, 0.6, 0.7, 0.8),
+                     labels = c(0.5, 0.6, 0.7, 0.8)) +
+  scale_y_continuous(limits = c(0.47, 0.87),
+                     expand = c(0.0, 0.0),
+                     breaks = c(0.5, 0.6, 0.7, 0.8),
+                     labels = c(0.5, 0.6, 0.7, 0.8)) +
+  scale_color_manual(values = apatite_geo_cols, 
+                     breaks = c("hexagonal", "ellipsoid"), 
+                     labels = c("Hexagonal", "Ellipsoid")) +
+  labs(x = TeX("2D $F_T$"), 
+       y= TeX("3D $F_T$")) +
+  theme_nanoct()
+
+pftcomba
+```
+
+R_Ft
+
+```{r rft}
+prfta <- apatite_regressions |> 
+  filter(parameter == "rft") |> 
+  arrange(geo) |> 
+  ggplot(aes(x = `2d`, y = `3d`, color = geo)) +
+  geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 2, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_color_manual(values = apatite_geo_cols, 
+                     breaks = c("hexagonal", "ellipsoid"), 
+                     labels = c("Hexagonal", "Ellipsoid")) +
+   scale_x_continuous(limits = c(22, 93),
+                     expand = c(0.01, 0.01),
+                     breaks = c(30, 50, 70, 90),
+                     labels = c(30, 50, 70, 90)) +
+  scale_y_continuous(limits = c(22, 93),
+                     expand = c(0.01, 0.01),
+                     breaks = c(30, 50, 70, 90),
+                     labels = c(30, 50, 70, 90)) +
+  labs(x = TeX("2D $R_{FT}$"), 
+       y= TeX("3D $R_{FT}$")) +
+  theme_nanoct()
+
+prfta
+```
+
+## Zircon
+
+Volume 
+
+```{r volume}
+pvz_zoomed <- zircon_regressions |> 
+  filter(parameter == "v") |> 
+  mutate(`2d_new` = `2d`/100000, 
+         `3d_new` = `3d`/100000) |> 
+  #arrange(geo) |> 
+  ggplot(aes(x = `2d_new`, y = `3d_new`, color = geo)) +
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 2, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_color_manual(values = zircon_geo_cols, 
+                     breaks = c("tetragonal", "ellipsoid"), 
+                     labels = c("Tetragonal", "Ellipsoid")) +
+  coord_cartesian(xlim = c(0,25), ylim = c(0, 25)) +
+  scale_x_continuous(breaks = seq(0, 25, 5)) +
+  scale_y_continuous(breaks = seq(0, 25, 5)) +
+  labs(x = TeX("2D Volume ($\\cdot 10^5$ $\\mu m^3$)"), 
+       y= TeX("3D Volume ($\\cdot 10^5$ $\\mu m^3$)")) +
+  theme_nanoct()
+
+
+pvz_full <- zircon_regressions |> 
+  filter(parameter == "v") |> 
+  mutate(`2d_new` = `2d`/100000, 
+         `3d_new` = `3d`/100000) |>
+  arrange(geo) |> 
+  ggplot(aes(x = `2d_new`, y = `3d_new`, color = geo)) +
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 1, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_color_manual(values = zircon_geo_cols,
+                     breaks = c("tetragonal", "ellipsoid"), 
+                     labels = c("Tetragonal", "Ellipsoid")) +
+  theme(panel.grid = element_blank(), 
+        legend.position = "none", 
+        plot.title = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks.length = unit(-0.15, "cm"),
+        axis.ticks = element_line(color = "black"),
+        axis.text = element_text(size = 7),
+        panel.border = element_rect(size = 1, color = "black")) +
+  annotate('rect', xmin = 0, ymin = 0, xmax = 25, ymax = 25, size = 0.5, fill = 'transparent', color = "black") +
+  coord_cartesian(xlim = c(0,71), ylim = c(0, 71)) +
+  scale_x_continuous(breaks = seq(0, 71, 20)) +
+  scale_y_continuous(breaks = seq(0, 71, 20)) 
+
+pvz <- pvz_zoomed + inset_element(pvz_full, 
+                          left = 0.01, 
+                          bottom = 0.57, 
+                          right = 0.42, 
+                          top = 0.99)
+
+pvz
+```
+
+
+Mean Ft
+
+```{r meanft}
+pftcombz <- zircon_regressions |> 
+  filter(parameter == "ftcomb") |> 
+  arrange(geo) |> 
+  ggplot(aes(x = `2d`, y = `3d`, color = geo)) +
+geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 2, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_color_manual(values = zircon_geo_cols, 
+                     breaks = c("tetragonal", "ellipsoid"), 
+                     labels = c("Tetragonal", "Ellipsoid")) +
+  scale_x_continuous(limits = c(0.49, 0.87), 
+                     expand = c(0.01,0.01),
+                     breaks = c(0.5, 0.6, 0.7, 0.8), 
+                     labels = c(0.5, 0.6, 0.7, 0.8)) +
+  scale_y_continuous(limits = c(0.49,0.87), 
+                     expand = c(0.01,0.01), 
+                     breaks = c(0.5, 0.6, 0.7, 0.8), 
+                     labels = c(0.5, 0.6, 0.7, 0.8)) +
+  labs(x = TeX("2D $F_T$"), 
+       y= TeX("3D $F_T$")) +
+  theme_nanoct()
+
+  
+pftcombz
+```
+
+R_Ft
+
+```{r rft}
+prftz <- zircon_regressions |> 
+  filter(parameter == "rft") |> 
+  arrange(geo) |> 
+  ggplot(aes(x = `2d`, y = `3d`, color = geo)) +
+  geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, size = 0.7) +
+  geom_point(size = 2, alpha = 0.7, shape = 16) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
+  scale_color_manual(values = zircon_geo_cols, 
+                     breaks = c("tetragonal", "ellipsoid"), 
+                     labels = c("Tetragonal", "Ellipsoid")) +
+   scale_x_continuous(limits = c(22, 93),
+                     expand = c(0.01, 0.01),
+                     breaks = c(30, 50, 70, 90),
+                     labels = c(30, 50, 70, 90)) +
+  scale_y_continuous(limits = c(22, 93),
+                     expand = c(0.01, 0.01),
+                     breaks = c(30, 50, 70, 90),
+                     labels = c(30, 50, 70, 90)) +
+  # coord_cartesian(xlim = c(20,93), ylim = c(20,93)) +
+  # scale_x_continuous(breaks = seq(30, 90, 20)) +
+  # scale_y_continuous(breaks = seq(30, 90, 20)) +
+  labs(x = TeX("2D $R_{FT}$"), 
+       y= TeX("3D $R_{FT}$")) +
+  theme_nanoct()
+ 
+prftz
+```
+
+# Print uncertainty results
+
+```{r print uncertainties}
+apatite_regressions |> 
+  select(parameter, pdiff, size_cat, geo) |> 
+  mutate(size = case_when(parameter == "ftcomb" & geo == "hexagonal" ~ as.character(size_cat), 
+                          TRUE ~ "all sizes"), 
+         size = factor(size, levels = c("medium", "large", "all sizes")), 
+         geo = factor(geo, levels = c("hexagonal", "ellipsoid"))) |> 
+  group_by(parameter, geo, size) |> 
+  summarize(uncert = round(sd(pdiff),0)) |> 
+  mutate(uncert = paste0(uncert, "%")) |> 
+  arrange(parameter, geo, size) |> 
+  knitr::kable(caption = "Apatite uncertainty values.") |>
+  kableExtra::kable_styling(full_width = FALSE)
+
+zircon_regressions |> 
+  select(parameter, pdiff, size_cat, geo) |> 
+  mutate(size = case_when(parameter == "ftcomb" & geo == "tetragonal" ~ as.character(size_cat), 
+                          TRUE ~ "all sizes"), 
+         size = factor(size, levels = c("medium", "large", "all sizes")), 
+         geo = factor(geo, levels = c("tetragonal", "ellipsoid"))) |> 
+  group_by(parameter, geo, size) |> 
+  summarize(uncert = round(sd(pdiff),0)) |> 
+  mutate(uncert = paste0(uncert, "%"))  |> 
+  knitr::kable(caption = "Zircon uncertainty values.") |>
+  kableExtra::kable_styling(full_width = FALSE)
+
+```
+
+# Plot uncertainty 
+
+Create plotting dataframe
+```{r uncert df}
+apatite_uncertainty_df <- apatite_regressions |> 
+  select(parameter, pdiff, size_cat, geo, w_max) |> 
+  mutate(size = case_when(parameter == str_match(parameter, ".?ft(.+)?")[,1] & geo == "hexagonal" ~ as.character(size_cat), 
+                          TRUE ~ "all sizes"), 
+         size = factor(size, levels = c("all sizes", "medium", "large")), 
+         geo = factor(geo, levels = c("hexagonal", "ellipsoid"))) |> 
+  arrange(desc(size))
+
+zircon_uncertainty_df <- zircon_regressions |> 
+  select(parameter, pdiff, size_cat, geo, w_max) |> 
+  mutate(size = case_when(parameter == str_match(parameter, ".?ft(.+)?")[,1] & geo == "tetragonal" ~ as.character(size_cat), 
+                          TRUE ~ "all sizes"), 
+         size = factor(size, levels = c("all sizes", "medium", "large")), 
+         geo = factor(geo, levels = c("tetragonal", "ellipsoid"))) |> 
+  #filter(str_detect(parameter, "^ft[1-9]{3}")) |> 
+  arrange(desc(size))
+```
+
+## Apatite
+
+Volume
+
+```{r volume}
+uncert_pva <- apatite_uncertainty_df |> 
+  filter(parameter == "v") |> 
+  arrange(geo) |> 
+  ggplot(aes(x = w_max, y = pdiff, color = geo)) +
+  scale_color_manual(values = apatite_geo_cols, 
+                     labels = c("Hexagonal", "Ellipsoid")) +
+  geom_abline(slope = 0, intercept = 0, size = 1) +
+  geom_point(size = 1.5) +
+  labs(x = "Maximum Width", 
+       y = "Volume Residuals (% diff.)") +
+  coord_cartesian(ylim=c(-90, 60)) +
+  scale_y_continuous(breaks = c(-90, -60, -30, 0, 30, 60), 
+                     labels = function(x) paste0(x, "%")) +
+  theme_uncert()
+
+uncert_pva
+```
+
+Mean Ft
+
+```{r meanft}
+uncert_pftcomba <- apatite_uncertainty_df |> 
+  filter(parameter == "ftcomb") |> 
+  arrange(geo) |> 
+  ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
+  scale_color_manual(values = c(large = "#2D728F", medium = "#2D728F", `all sizes` = "#D5920B"),
+                     guide = "none") +
+  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
+                     labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
+  scale_fill_manual(values = c(large = "#2D728F", medium= "#2D728F", `all sizes` = "#D5920B"),
+                    labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
+  geom_abline(slope = 0, intercept = 0, size =1) +
+  geom_point(size = 1.5) +
+  labs(x = "Maximum Width", 
+       y = TeX("F$_T$ Residuals (% diff.)")) +
+  coord_cartesian(ylim=c(-30, 30)) +
+  scale_y_continuous(breaks = c(-30, -15, 0, 15, 30),
+                     labels = function(x) paste0(x, "%")) +
+  theme_uncert() +
+  theme(legend.position = c(0.75,0.19))
+
+uncert_pftcomba
+```
+
+R_Ft
+
+```{r rft}
+uncert_prfta <- apatite_uncertainty_df |> 
+  filter(parameter == "rft") |> 
+  arrange(geo) |> 
+ ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
+  scale_color_manual(values = c(large = "#2D728F", medium = "#2D728F", `all sizes` = "#D5920B"),
+                     guide = "none") +
+  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
+                     labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
+  scale_fill_manual(values = c(large = "#2D728F", medium= "#2D728F", `all sizes` = "#D5920B"),
+                    labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
+  geom_abline(slope = 0, intercept = 0, size =1) +
+  geom_point(size = 1.5) +
+ labs(x = "Maximum Width", 
+       y = TeX("R$_{FT}$ Residuals (% diff.)")) +
+  coord_cartesian(ylim=c(-30, 30)) +
+  scale_y_continuous(breaks = c(-30, -15, 0, 15, 30),
+                     labels = function(x) paste0(x, "%")) +
+  theme_uncert() +
+  theme(legend.position = c(0.75,0.19))
+
+uncert_prfta
+```
+
+## Zircon
+
+Volume
+```{r volume}
+uncert_pvz <- zircon_uncertainty_df |> 
+  filter(parameter == "v") |> 
+  arrange(geo) |> 
+  ggplot(aes(x = w_max, y = pdiff, color = geo)) +
+  scale_color_manual(values = zircon_geo_cols, 
+                     labels = c("Tetragonal", "Ellipsoid")) +
+  geom_abline(slope = 0, intercept = 0, size = 1) +
+  geom_point(size = 1.5) +
+  labs(x = "Maximum Width", 
+     y = TeX("Volume Residuals (% diff.)")) + 
+  coord_cartesian(ylim=c(-90, 60)) +
+  scale_y_continuous(breaks = c(-90, -60, -30, 0, 30, 60), 
+                     labels = function(x) paste0(x, "%")) +
+  theme_uncert()
+
+uncert_pvz
+```
+
+Mean Ft
+
+```{r meanft}
+uncert_ftcombz <- zircon_uncertainty_df |> 
+  filter(parameter == "ftcomb") |> 
+  arrange(desc(size)) |> 
+  ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
+  scale_color_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"),
+                     guide = "none") +
+  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
+                     labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
+  scale_fill_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"), 
+                    labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
+  geom_abline(slope = 0, intercept = 0, size = 1) +
+  geom_point(size = 1.5) +
+  labs(x = "Maximum Width", 
+       y = TeX("F$_T$ Residuals (% diff.)")) +
+  coord_cartesian(ylim=c(-30, 30)) +
+  scale_y_continuous(breaks = c(-30, -15, 0, 15, 30),
+                     labels = function(x) paste0(x, "%")) +
+  theme_uncert() +
+  theme(legend.position = c(0.75,0.19))
+
+uncert_ftcombz
+```
+
+R_Ft
+
+```{r rft}
+uncert_prftz <- zircon_uncertainty_df |> 
+  filter(parameter == "rft") |> 
+  arrange(geo) |> 
+   ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
+  scale_color_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"),
+                     guide = "none") +
+  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
+                     labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
+  scale_fill_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"), 
+                    labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
+  geom_abline(slope = 0, intercept = 0, size = 1) +
+  geom_point(size = 1.5) +
+  labs(x = "Maximum Width", 
+       y = TeX("R$_{FT}$ Residuals (% diff.)")) +
+  coord_cartesian(ylim=c(-30, 30)) +
+  scale_y_continuous(breaks = c(-30, -15, 0, 15, 30),
+                     labels = function(x) paste0(x, "%")) +
+  theme_uncert() +
+  theme(legend.position = c(0.75,0.19))
+
+uncert_prftz
+```
+
+Print plots #7 and #8 
+
+```{r print}
+(pva / pftcomba / prfta) | (uncert_pva / uncert_pftcomba / uncert_prfta) 
+(pvz / pftcombz / prftz) | (uncert_pvz / uncert_ftcombz / uncert_prftz)
+```
+
+# Size Distribution Figure 
+
+## Apatite 
+
+```{r ap_sizedist, dpi = 300}
+size_dist <- readxl::read_xlsx("data/size-distribution.xlsx")
+
+polygon.small <- as.data.frame(cbind(c(40, 40, 45, 50, 50, 45), 
+                                     c(0, 3, 9, 9, 0, 0)))
+
+polygon.medium <- as.data.frame(cbind(
+  c(50, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 100, 50), 
+  c(0, 9, 15, 21, 27, 29, 29, 21, 21, 16, 12, 11, 0, 0)))
+
+polygon.large <- as.data.frame(cbind(
+  c(100, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170, 175, 180, 185, 190, 195, 200,200, 100), 
+  c(0, 11, 10,  4,  3,  3,  4,  3,  3,  4,  6,  2,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0)))
+
+size_dist_apatite <- size_dist |> 
+  filter(a_obs_w_max < 200 & a_obs_w_max > 40) |> 
+  select(a_obs_w_max)
+
+p_sizedist_ap <- ggplot(size_dist_apatite) +
+  geom_area(stat= "bin", fill= "grey90", binwidth = 5, mapping = aes(x = a_obs_w_max)) +
+  geom_area(apatite_raw, stat = "bin", fill = "transparent", color = "black", binwidth = 5, mapping = aes(x = w_max)) +
+  geom_polygon(polygon.small, mapping = aes(x = V1, y = V2), fill = "grey10", alpha = 0.5) +
+  geom_polygon(polygon.medium, mapping = aes(x = V1, y = V2), fill = "maroon", alpha = 0.5) +
+  geom_polygon(polygon.large, mapping = aes(x = V1, y = V2), fill = "darkgreen", alpha = 0.5) +
+  scale_x_continuous(breaks = seq(40, 200, 20)) +
+  scale_y_continuous(breaks = seq(0, 100, 20), 
+                     limits = c(0, 100)) +
+  labs(x = TeX("Maximum Width ($\\mu$m)"), y = "Number of Apatite Grains") +
+  theme(panel.grid.major = element_blank(), 
+        axis.text = element_text(size = 6), 
+        axis.title = element_text(size = 9)) +
+    annotate("text", x = 42, y = 15, label = "N = 17") + #small
+    geom_segment(x = 42, xend = 45, y = 13, yend = 10) + #small
+    annotate("text", x = 75, y = 15, label = "N = 205") + #average
+    annotate("text", x = 120, y = 15, label = "N = 45") + #large
+    geom_segment(x = 120, xend = 125, y = 13, yend = 5) + #large
+    annotate("text", x = 90, y = 40, label = "N = 1061") 
+  
+p_sizedist_ap
+
+#g <- ggplot_build(p_sizedist_ap)$data[[1]]
+
+apatite_raw |> 
+  group_by(size_cat) |> 
+  count()
+
+```
+
+### Figure 3b 
+
+```{r fig3b, echo = FALSE}
+polygon.small <- as.data.frame(cbind(c(30, 35, 40, 45, 50, 50, 30), 
+                                     c(0, 1, 2, 7, 5, 0, 0)))
+
+polygon.medium <- as.data.frame(cbind(
+  c(50, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 100, 50), 
+  c(0, 5, 11, 8, 18, 13, 16, 13, 28, 16, 14, 18, 0, 0)))
+
+polygon.large <- as.data.frame(cbind(
+  c(100, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170, 175, 180, 185, 190, 195, 200,200, 100), 
+  c(0, 18, 9,  10,  10,  6,  4,  5,  3,  1,  5,  1,  1,  0,  0,  1,  0,  0,  0,  0,  0,  0, 0, 0)))
+
+size_dist_zircon <- size_dist |> 
+  filter(z_obs_w_max < 200 & z_obs_w_max > 30) |> 
+  select(z_obs_w_max)
+
+p_sizedist_zr <- ggplot(size_dist_zircon) +
+  geom_area(stat= "bin", fill= "grey90", binwidth = 5, mapping = aes(x = z_obs_w_max)) +
+   geom_area(zircon_raw, stat = "bin", fill = "transparent", color = "black", binwidth = 5, mapping = aes(x = w_max)) +
+  geom_polygon(polygon.small, mapping = aes(x = V1, y = V2), fill = "grey10", alpha = 0.5) +
+  geom_polygon(polygon.medium, mapping = aes(x = V1, y = V2), fill = "maroon", alpha = 0.5) +
+  geom_polygon(polygon.large, mapping = aes(x = V1, y = V2), fill = "darkgreen", alpha = 0.5) +
+  scale_x_continuous(breaks = seq(30, 200, 20)) +
+  scale_y_continuous(breaks = seq(0, 100, 20), 
+                     limits = c(0,100)) +
+  labs(x = TeX("Maximum Width ($\\mu$m)"), y = "Number of Zircon Grains") +
+  theme(panel.grid.major = element_blank(), 
+        axis.text = element_text(size = 6), 
+        axis.title = element_text(size = 9)) +
+  annotate("text", x = 35, y = 10, label = "N = 13") + #small
+  geom_segment(x = 34, xend = 40, y = 8, yend = 5) + #small
+  annotate("text", x = 80, y = 10, label = "N = 150") + #average
+  annotate("text", x = 130, y = 10, label = "N = 63") + #large
+  geom_segment(x = 129, xend = 133, y = 8, yend = 5) + #large
+  annotate("text", x = 80, y = 40, label = "N = 736") 
+
+p_sizedist_zr
+
+#g <- ggplot_build(p_sizedist_zr)$data[[1]]
+
+
+zircon_raw |> 
+  group_by(size_cat) |> 
+  count()
+```
+Size distribution for zircon
+
+```{r print}
+p_sizedist_ap + p_sizedist_zr + plot_annotation(tag_levels = 'A')
+```
+
+## Figure S1
+```{r figs1}
+# apatite
+a_base<- apatite_raw |> select(gem, sample, w_max) |> separate(sample, into = c("sample_name", "mount", "num"), sep = ",") |>  select(sample_name, gem, w_max) 
+
+# count samples
+a_base |> group_by(gem) |>select(gem, sample_name) |> distinct() |> arrange(gem, sample_name) |> print(n = Inf)
+# count grains per gem
+a_base |>  select(sample_name, gem, w_max) |> count()
+
+# plot size dist (must load size_dist_apatite from fig3a/3b)
+a_base |> 
+  select(gem, w_max) |> 
+  ggplot(aes(x = w_max)) +
+  geom_histogram(aes(y = ..density..), binwidth = 10) +
+  geom_density(size_dist_apatite, mapping = aes(x = a_obs_w_max)) +
+  facet_wrap(~gem)
+
+#zircon
+z_base <- zircon_raw |> select(gem, sample, w_max) |> separate(sample, into = c("sample_name", "mount", "num"), sep = "_") |>  select(sample_name, gem, w_max) 
+
+#count samples
+z_base |> group_by(gem) |> select(gem, sample_name) |> distinct() |> arrange(gem, sample_name) |> print(n = Inf) 
+
+z_base |>  select(sample_name, gem) |> group_by(gem) |> count()
+
+# plot size dist (must load size_dist_apatite from fig3a/3b)
+z_base |> 
+  select(gem, w_max) |> 
+  ggplot(aes(x = w_max)) +
+  geom_histogram(aes(y = ..density..), binwidth = 10) +
+  geom_density(size_dist_zircon, mapping = aes(x = z_obs_w_max)) +
+  facet_wrap(~gem)
+```
+
+
+
+#----------------------- For easy analysis/visualization----------------#
+
+# Plot regression results
+
+Create base plot + dataframes for plotting
+
+```{r reg base plot}
+regression_plot <- ggplot(apatite_regressions, aes(x = `2d`, y = `3d`, color = gc)) +
+    geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, size = 1) +
+  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE) +
+  geom_point(size = 1.5) +
+  #scale_color_manual(values = ft_cols) +
+  labs(x = "2D (max widths)", 
+       y= "3D", 
+       color = "Legend")
+```
+
+## Apatite
+
+### Volume [zoomed in]
+
+```{r ap reg vol}
+regression_plot %+% 
+  filter(apatite_regressions, parameter == "v") %+%
+  coord_cartesian(xlim = c(0,1000000), ylim = c(0, 1000000)) + #zoomed in
+  scale_color_manual(values = apatite_gc_cols) +
+  labs(title = "Apatite Volume Regressions") +
+  theme(panel.grid = element_blank(), 
+        legend.position = c(0.15,0.85), 
+        legend.background = element_rect(color = "black", size = 0.1))
+```
+
+### Ft
+
+```{r ap reg meanft}
+regression_plot %+% 
+  filter(apatite_regressions, parameter == "ftcomb") %+%
+  geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  scale_color_manual(values = ft_cols) +
+  labs(title = TeX("Apatite $\\bar{Ft}$ Regressions")) +
+    theme(panel.grid = element_blank(), 
+        legend.position = c(0.15,0.85), 
+        legend.background = element_rect(color = "black", size = 0.1))
+
+```
+
+```{r ap reg iso-specific ft facted}
+regression_plot %+%
+  filter(apatite_regressions, str_detect(parameter, "^ft[1-9]{3}")) %+%
+  #scale_color_manual(values = ft_cols) +
+  facet_wrap(~parameter) +
+  labs(title = "Apatite Isotope Specific Ft Regressions") +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank())
+```
+
+```{r ap reg iso-specific ft not facted}
+# regression_plot %+% 
+#   filter(apatite_regressions, parameter == "ft238") %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Apatite 238 Ft Regressions")
+# 
+# regression_plot %+% 
+#   filter(apatite_regressions, parameter == "ft232") %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Apatite 232 Ft Regressions")
+# 
+# regression_plot %+% 
+#   filter(apatite_regressions, parameter == "ft235") %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Apatite 235 Ft Regressions")
+# 
+# regression_plot %+% 
+#   filter(apatite_regressions, parameter == "ft147") %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Apatite 147 Ft Regressions")
+
+
+```
+
+### Rs
+
+```{r ap reg rft}
+regression_plot %+% 
+  filter(apatite_regressions, parameter == "rft") %+%
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  scale_color_manual(values = rft_cols) +
+  labs(title = TeX("Apatite $R_{Ft}$ Regressions"))
+```
+
+### Surface Area
+
+```{r ap reg sa}
+ggplot(apatite, aes(x = sa_max, y = sa_3d, color= geo)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = "y ~ 0+ x", se = FALSE) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  scale_color_manual(values = c("#E4572E", "#4150B4")) +
+  coord_cartesian(xlim = c(0, 70000), ylim = c(0, 70000)) +
+  labs(title = "Apatite SA Regressions") 
+```
+
+## Zircon
+
+### Volume
+
+```{r zirc reg vol}
+regression_plot %+% 
+  filter(zircon_regressions, parameter == "v") %+%
+  geom_point(shape = 15) %+%
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  coord_cartesian(xlim = c(0,1000000), ylim = c(0, 1000000)) + #zoomed in +
+  scale_color_manual(values = vol_cols) +
+  labs(title = "Zircon Volume Regressions") 
+```
+
+### Ft
+
+```{r zirc reg meanft}
+regression_plot %+% 
+  filter(zircon_regressions, parameter == "ftcomb") %+%
+  geom_point(shape = 15) %+%
+  geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  scale_color_manual(values = ft_cols) +
+  labs(title = TeX("Zircon $\\bar{Ft}$ Regressions"))
+
+```
+
+```{r zirc reg iso-specific ft facted}
+regression_plot %+%
+  filter(zircon_regressions, str_detect(parameter, "ft[1-9]{3}")) %+%
+  geom_point(shape= 15) %+%
+  facet_wrap(~parameter) +
+  labs(title = "Zircon Isotope Specific Ft Regressions") +
+  scale_color_manual(values = ft_cols) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank())
+```
+
+
+```{r zirc iso-specific ft not facted}
+# regression_plot %+% 
+#   filter(zircon_regressions, parameter == "ft238") %+%
+#   geom_point(shape= 22) %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Zircon 238 Ft Regressions")
+# 
+# regression_plot %+% 
+#   filter(zircon_regressions, parameter == "ft232") %+%
+#   geom_point(shape= 22) %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Zircon 232 Ft Regressions")
+# 
+# 
+# regression_plot %+% 
+#   filter(zircon_regressions, parameter == "ft235") %+%
+#   geom_point(shape= 22) %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Zircon 235 Ft Regressions")
+# 
+# regression_plot %+% 
+#   filter(zircon_regressions, parameter == "ft147") %+%
+#   geom_point(shape= 22) %+%
+#   geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "Zircon 147 Ft Regressions")
+```
+
+### R_Ft
+
+```{r zirc reg rft}
+regression_plot %+% 
+  filter(zircon_regressions, parameter == "rft") %+%
+  geom_point(shape = 15) %+%
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  scale_color_manual(values = rft_cols) +
+  labs(title = TeX("Zircon $R_{Ft}$ Regressions"))
+```
+
+### Surface Area
+
+```{r zirc reg sa}
+ggplot(zircon, aes(x = sa_both, y = sa_3d, color= geo, text = id)) +
+  geom_point(shape = 15) +
+  geom_smooth(method = "lm", formula = "y ~ 0+ x", se = FALSE) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.6) +
+  scale_color_manual(values = c("#E4572E", "#4150B4")) +
+  #coord_cartesian(xlim = c(0, 70000), ylim = c(0, 70000)) +
+  labs(title = "Zircon SA Regressions") 
+```
+
+# Plot uncertainty on the correction
+
+Create plotting df
+
+```{r uncert plot df}
+apatite_uncertainty_df <- apatite_regressions |> 
+  select(parameter, pdiff, size_cat, geo, w_max) |> 
+  mutate(size = case_when(parameter == str_match(parameter, "ft[1-9a-z]{3}") & geo == "hexagonal" ~ as.character(size_cat), 
+                          TRUE ~ "all"), 
+         size = factor(size, levels = c("all", "medium", "large")), 
+         geo = factor(geo, levels = c("hexagonal", "ellipsoid"))) |> 
+  arrange(desc(size))
+
+zircon_uncertainty_df <- zircon_regressions |> 
+  select(parameter, pdiff, size_cat, geo, w_max) |> 
+  mutate(size = case_when(parameter == str_match(parameter, "ft[1-9a-z]{3}") & geo == "tetragonal" ~ as.character(size_cat), 
+                          TRUE ~ "all"), 
+         size = factor(size, levels = c("all", "medium", "large")), 
+         geo = factor(geo, levels = c("tetragonal", "ellipsoid"))) |> 
+  #filter(str_detect(parameter, "^ft[1-9]{3}")) |> 
+  arrange(desc(size))
+```
+
+Create base plot
+
+```{r uncert base plot}
+uncertainty_plot <- ggplot(apatite_uncertainty_df, aes(x = w_max, y = pdiff)) +
+  geom_abline(slope = 0, intercept = 0) +
+  geom_point(shape = 16) +
+  labs(x = "Max Width", 
+       y = "Residuals as a Percent Difference", 
+       color = "Legend")
+
+uncertainty_cols <- c("all" = "black", "medium" = "#7BAFDE", "large" = "#4EB265")
+```
+
+## Apatite 
+
+### Volume
+
+```{r ap uncert vol}
+# uncertainty_plot %+%
+#   filter(apatite_regressions, parameter == "v" & geo == "hexagonal") %+%
+#   labs(title = "Volume Residuals for Hexagonal Grains")
+# 
+# uncertainty_plot %+%
+#   filter(apatite_regressions, parameter == "v" & geo == "ellipsoid") %+%
+#   labs(title = "Volume Residuals for Ellipsoid Grains")
+
+
+uncertainty_plot %+%
+  filter(apatite_uncertainty_df, parameter == "v") %+%
+  facet_wrap(~geo) +
+  labs(title = "Apatite Volume Residuals") +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank())
+```
+
+### Ft 
+
+```{r ap uncert meanft}
+uncertainty_plot %+%
+  filter(apatite_uncertainty_df, parameter == "ftcomb") %+%
+  aes(color = size) +
+  scale_color_manual(values = uncertainty_cols, 
+                     labels = c("ellipsoid", "hex- medium", "hex- large")) +
+  labs(title = "238Ft Residuals for Hexagonal Grains", 
+       color = "Legend") +
+  facet_wrap(~geo) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank())
+
+
+```
+
+```{r ap uncert iso-specific ft facted}
+uncertainty_plot %+%
+  filter(apatite_uncertainty_df, str_detect(parameter, "^ft[1-9]{3}")) %+%
+  aes(color = size) +
+  scale_color_manual(values = c("all" = "black", "medium" = "#7BAFDE", "large" = "#4EB265"), 
+                     labels = c("ellipsoid", "hex- medium", "hex- large")) +
+  facet_wrap(~parameter) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank()) +
+   labs(color = "Legend", 
+        title = "Apatite Isotope Specific Ft Residuals") 
+```
+
+
+```{r ap uncert iso-specific ft not facted}
+# # Ft238
+# uncertainty_plot %+%
+#   filter(apatite_uncertainty_df, parameter == "ft238" & geo == "hexagonal") %+%
+#   aes(color = size_cat) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "238Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(apatite_uncertainty_df, parameter == "ft238" & geo == "ellipsoid") %+%
+#   labs(title = "238Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(40,165))
+# 
+# # Ft232
+# uncertainty_plot %+%
+#   filter(apatite_uncertainty_df, parameter == "ft232" & geo == "hexagonal") %+%
+#   aes(color = size_cat) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "232Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(apatite_uncertainty_df, parameter == "ft232" & geo == "ellipsoid") %+%
+#   labs(title = "232Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(40,165))
+# 
+# # Ft235
+# uncertainty_plot %+%
+#   filter(apatite_uncertainty_df, parameter == "ft235" & geo == "hexagonal") %+%
+#   aes(color = size_cat) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "235Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(apatite_regressions, parameter == "ft235" & geo == "ellipsoid") %+%
+#   labs(title = "235Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(40,165))
+# 
+# # Ft147 
+# uncertainty_plot %+%
+#   filter(apatite_uncertainty_df, parameter == "ft147" & geo == "hexagonal") %+%
+#   aes(color = size_cat) +
+#   scale_color_manual(values = ft_cols) +
+#   labs(title = "147Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(apatite_regressions, parameter == "ft147" & geo == "ellipsoid") %+%
+#   labs(title = "147Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(40,165))
+```
+
+
+### R_Ft
+
+```{r ap uncert rft}
+uncertainty_plot %+%
+  filter(apatite_uncertainty_df, parameter == "rft") %+%
+  facet_wrap(~geo) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank()) +
+  labs(title = TeX("Apatite $R_{Ft}$ Residuals"))
+
+# uncertainty_plot %+%
+#   filter(apatite_regressions, parameter == "rs" & geo == "hexagonal") %+%
+#   labs(title = "SA/V Rs Residuals for Hexagonal Grains")
+# 
+# 
+# uncertainty_plot %+%
+#   filter(apatite_regressions, parameter == "rs" & geo == "ellipsoid") %+%
+#   labs(title = "SA/V Rs Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(40,165))
+```
+
+
+## Zircon 
+
+### Volume
+
+```{r zirc uncert vol}
+# uncertainty_plot %+%
+#   filter(zircon_uncertainty_df, parameter == "v" & geo == "tetragonal") %+%
+#   labs(title = "Volume Residuals for Hexagonal Grains") 
+#   #scale_x_continuous(breaks = c(seq(40, 170, 10)))
+# 
+# uncertainty_plot %+%
+#   filter(zircon_uncertainty_df, parameter == "v" & geo == "ellipsoid") %+%
+#   labs(title = "Volume Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(35,175))
+
+uncertainty_plot %+%
+  filter(zircon_uncertainty_df, parameter == "v") %+%
+  facet_wrap(~geo) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank()) +
+  geom_point(shape = 15) +
+  labs(title = "Zircon Volume Residuals")
+```
+
+### Ft 
+
+```{r zirc uncert meanft}
+uncertainty_plot %+%
+  filter(zircon_uncertainty_df, parameter == "ftcomb") %+%
+  aes(color = size) +
+  geom_point(shape = 15) +
+  scale_color_manual(values = uncertainty_cols, 
+                     labels = c("ellipsoid", "tet- medium", "tet- large")) +
+  labs(color = "Legend",
+       title = TeX("Zircon $\\bar{Ft}$ Residauls")) +
+  facet_wrap(~geo) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank())
+```
+
+```{r zirc uncert iso-specific ft facted}
+uncertainty_plot %+%
+  filter(zircon_uncertainty_df, str_detect(parameter, "^ft[1-9]{3}")) %+%
+  aes(color = size) +
+  geom_point(shape = 15) +
+  scale_color_manual(values = uncertainty_cols, 
+                     labels = c("ellipsoid", "tet- medium", "tet- large")) +
+  labs(color = "Legend", 
+       title = "Zircon Isotope Specific Ft Residauls") +
+  facet_wrap(~parameter) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank())
+```
+
+```{r zirc uncert iso-specific ft not facted}
+# # Ft238
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft238" & geo == "tetragonal") %+%
+#   aes(color = size_cat) +
+#   labs(title = "238Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft238" & geo == "ellipsoid") %+%
+#   labs(title = "238Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(35,175))
+# 
+# # Ft232
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft232" & geo == "tetragonal") %+%
+#   aes(color = size_cat) +
+#   labs(title = "232Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft232" & geo == "ellipsoid") %+%
+#   labs(title = "232Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(35,175))
+# 
+# # Ft235
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft235" & geo == "tetragonal") %+%
+#   aes(color = size_cat) +
+#   labs(title = "235Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft235" & geo == "ellipsoid") %+%
+#   labs(title = "235Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(35,175))
+# 
+# # Ft147 
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft147" & geo == "tetragonal") %+%
+#   aes(color = size_cat) +
+#   labs(title = "147Ft Residuals for Hexagonal Grains", 
+#        color = "Legend")
+# 
+# uncertainty_plot %+%
+#   filter(zircon_regressions, parameter == "ft147" & geo == "ellipsoid") %+%
+#   labs(title = "147Ft Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(35,175))
+
+```
+
+### R_Ft
+
+```{r zirc uncert rft}
+# uncertainty_plot %+%
+#   filter(zircon_uncertainty_df, parameter == "rft" & geo == "tetragonal") %+%
+#   labs(title = TeX("$R_{Ft}$ Residuals for Hexagonal Grains"))
+# 
+# uncertainty_plot %+%
+#   filter(zircon_uncertainty_df, parameter == "rft" & geo == "ellipsoid") %+%
+#   labs(title = TeX("$R_{Ft}$ Residuals for Ellipsoid Grains") +
+#   coord_cartesian(xlim=c(35,175))
+
+uncertainty_plot %+%
+  filter(zircon_uncertainty_df, parameter == "rft") %+%
+  facet_wrap(~geo) +
+  geom_point(shape = 15) +
+  labs(title = TeX("Zircon $R_{Ft}$ Residuals")) +
+  theme(strip.background = element_rect(fill="transparent", 
+                                        color = "black"), 
+        strip.text = element_text(colour = "black"), 
+        panel.grid.minor = element_blank())
+```
+

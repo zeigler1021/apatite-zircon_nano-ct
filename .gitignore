@@ -1,0 +1,33 @@
+# GIT ignore commands for the entire project
+
+# exclude output files
+*.html
+
+# OS generated files
+.DS_Store
+.DS_Store?
+~$*
+.Spotlight*
+.Trashes
+ehthumbs.db
+Thumbs.db
+Icon?
+
+# exclude R & Rstudio temp files
+*.utf8.md
+*.knit.md
+.Rproj.user
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+.Rbuildignore
+packrat/lib*/
+packrat/src/
+
+*.png
+*.pdf
+
+# exclude figures 
+figures/
