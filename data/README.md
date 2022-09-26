@@ -32,7 +32,7 @@ For columns N-AL, the following suffixes are appended to the parameter:
 
 Parameters: isotope specific FTs, FTcombined, volume, surface area, Rs (SA/V), RFT
 
--l1: first measured length
+- l1: first measured length
 - w1: max width
 - l2: second measured length
 - w2: min width
