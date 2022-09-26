@@ -359,11 +359,11 @@ polygon.large <- as.data.frame(cbind(
   c(0, 11, 10,  4,  3,  3,  4,  3,  3,  4,  6,  2,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0)))
 
 size_dist_apatite <- size_dist |> 
-  filter(a_obs_w_max < 200 & a_obs_w_max > 40) |> 
-  select(a_obs_w_max)
+  filter(apatite_obs_w_max < 200 & apatite_obs_w_max > 40) |> 
+  select(apatite_obs_w_max)
 
 p_sizedist_ap <- ggplot(size_dist_apatite) +
-  geom_area(stat= "bin", fill= "grey90", color = "black", size = 0.25, binwidth = 5, mapping = aes(x = a_obs_w_max)) +
+  geom_area(stat= "bin", fill= "grey90", color = "black", size = 0.25, binwidth = 5, mapping = aes(x = apatite_obs_w_max)) +
   geom_area(apatite_raw, stat = "bin", fill = "transparent", color = "black", binwidth = 5, mapping = aes(x = w_max)) +
   geom_polygon(polygon.small, mapping = aes(x = V1, y = V2), fill = "#F97068", alpha = 0.7) +
   geom_polygon(polygon.medium, mapping = aes(x = V1, y = V2), fill = "#A14DA0", alpha = 0.7) +

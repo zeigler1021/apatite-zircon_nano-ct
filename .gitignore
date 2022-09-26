@@ -3,6 +3,7 @@
 # exclude output files
 *.html
 *.docx
+*.pdf
 
 # OS generated files
 .DS_Store
