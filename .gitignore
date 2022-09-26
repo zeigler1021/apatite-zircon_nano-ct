@@ -40,8 +40,8 @@ output/20220926_old-version-and-zircon.zip
 hecalc-data-cleaning.Rmd
 copernicus_template/
 data/20220816_comparisons-other-studies.xlsx
-data/20220804_apatite-anova-comps
-zircon-nano-ct 
-zeigler-et-al_2022
+output/20220804_apatite-anova-comps.csv
+zircon-nano-ct.Rmd 
+zeigler-et-al_2022.docx
 
  
