@@ -1,15 +1,9 @@
 ---
-title: "Apatite & Zircon Nano-CT"
-subtitle: "Statistics & Plotting"
+title: "Zircon Nano-CT"
+subtitle: "SUBTITLE"
 author: "Spencer Zeigler"
 date: "`r format(Sys.Date(), '%d-%m-%Y')`"
 output:
-  pdf_document:
-    df_print: kable
-    number_sections: yes
-    toc: yes
-    toc_depth: 3
-    highlight: tango
   html_document: 
     df_print: paged
     number_sections: yes
@@ -17,11 +11,17 @@ output:
     toc_depth: 3
     highlight: tango
     theme: yeti
+  pdf_document:
+    df_print: kable
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    highlight: tango
 editor_options:
   chunk_output_type: console
 ---
 
-```{r setup, include=FALSE}
+```{r "setup", include=FALSE}
 # packages
 library(tidyverse) # general data wrangling and plotting
 library(broom) # Convert Statistical Objects into Tidy Tibbles
@@ -43,30 +43,18 @@ theme_update(plot.subtitle= element_text(hjust = 0)) #adjusts subtitle so they a
 options(scipen = 10000000) #prints numbers instead of scientific notation
 
 # colors
-apatite_geo_cols <- c("#2D728F","#D5920B")
-zircon_geo_cols <- c("#517048", "#C84167")
+zircon_geo_cols <- c("#5A8958", "#994C84") 
+
 
 # percent diff lines
 pd_ft <- read_csv("data/percent_difference_ft.csv")
 pd_v <- read_csv("data/percent_difference_vol.csv")
+pd_v <- slice(pd_v, 2:4, 6:8)
 ```
 
 # Loading Data
 
-```{r load data}
-apatite_raw <- readxl::read_xlsx("data/20220704_apatite-data.xlsx") #read in raw data
-
-# select columns needed for analysis, mutate to create a column on which i can filter out grains with 2D Ft < 0.5, remove three grains unsuitable for analysis (termination ends & an accidental zircon), change name of size_cat from 'average' or 'small' to 'medium', and convert some columns to factors
-
-apatite <- apatite_raw |> 
-  select(id, sample, gem, gc, ri, np_obs, np_num_obs, geo, size_cat, ft238_max, ft238_3d, ft232_max, ft232_3d, ft235_max, ft235_3d, ft147_max, ft147_3d, ftcomb_max, ftcomb_3d, v_max, v_3d, rft_max, rft_3d, sa_max, sa_3d, w_max, l_avg, w_min, grain) |>  
-  filter(ftcomb_max > 0.5 & ftcomb_3d > 0.5) |> 
-  filter(sample != "DCA,1a,1" & sample != "15MFS07,5b,2" & sample != "FCT,2a4,4") |> 
-  mutate(size_cat = stringr::str_replace(size_cat, "average|small", "medium"), 
-         axial_ratio = w_max/w_min) |> 
-  mutate_at(c("gem", "gc", "ri", "size_cat", "geo"), factor)
-
-
+```{r zirc regressions}
 zircon_raw <- readxl::read_xlsx("data/20220704_zircon-data.xlsx") #read in raw data
 
 # select columns needed for analysis and convert some columns to factors 
@@ -78,46 +66,7 @@ zircon <- zircon_raw |>
   mutate(size_cat = stringr::str_replace(size_cat, "average|small", "medium"), 
          axial_ratio = w_max/w_min) |> 
  filter(sample != "RGD17-21_1_2" & sample != "CP06-70_1_6" & sample != "PP4_5_4") # outlier on SA plots; outlier on volume residual plot; outlier on volume regression plot
-```
 
-# Linear regressions: Correction
-
-```{r ap regressions}
-apatite_regressions <- apatite |> 
-  select(id, sample, grain, geo, ri, gc, np_obs, gem, size_cat, w_max, ft238_max, ft238_3d,  ft232_max, ft232_3d, ft235_max, ft235_3d, ft147_max, ft147_3d, ftcomb_max, ftcomb_3d, v_3d, v_max, rft_max, rft_3d) |> 
-  pivot_longer(ft238_max:rft_3d) |> 
-  separate(name, into = c("parameter", "split"), sep = "_", remove = TRUE) |> 
-  pivot_wider(names_from = split, values_from = value) |> # makes two columns-- '3D' and 'max'
-  rename(`2d` = max) |> 
-  group_split(geo, parameter, grain) |> # creates list of tibbles grouped by geo, parameter 
-  map_dfr(~bind_cols(select(.x, ri, gc, np_obs, gem, size_cat, w_max, id, geo, parameter, grain, sample), 
-                     augment(lm(`2d` ~ 0 + `3d`, data = .x)), 
-                     tidy(lm(`2d` ~ 0 + `3d`, data = .x)), .id = "id")) |> 
-  select(estimate, .resid, ri:`3d`, geo, parameter, grain, sample) |> 
-  rename(residuals = .resid) |> 
-    mutate(pdiff = residuals/`2d` * 100)
-
-apatite_regressions <- arrange(apatite_regressions, parameter, geo)
-
-apatite_regressions$parameter = factor(apatite_regressions$parameter, levels = c("ftcomb", "ft238", "ft235", "ft232", "ft147", "v", "rft"))
-apatite_regressions$geo = factor(apatite_regressions$geo, levels = c("hexagonal", "ellipsoid"))
-
-
-# select columns we need for analysis
-# pivot longer so column names are now in a single column and all the values are in another column 
-# split column names so that the parameter (ft, v, rs) are separate from the measurement type (3d, 2d)
-# pivot wider so two new columns are made (2d, 3d) with the corresponding values
-# rename "max" to "2d"
-# create a list of tibbles split by the geometry and the parameter 
-# run a regression on each tibble (ie. on each combination of geometry and parameter). bind together the results of selecting columns i want to keep, running a regression and selecting parameters with 'augment' and running a regressions and selecting parameters from 'tidy'. 
-# tidy and augment produce more than i want, so i select only the columns i care about 
-# do some simple renaming
-# turn residuals into a percent difference 
-
-# arrange dataframe by parameter and within each parameter, arrange by geo (for plotting)
-```
-
-```{r zirc regressions}
 zircon_regressions <- zircon |> 
   select(id, grain, geo, ci, gc, np_obs, gem, size_cat, w_max, w_avg, ft238_both, ft238_3d, v_3d, v_both,  ft232_both, ft232_3d, ft235_both, ft235_3d, ft147_both, ft147_3d, ftcomb_both, ftcomb_3d, rft_both, rft_3d) |>
   pivot_longer(ft238_both:rft_3d) |> 
@@ -140,141 +89,16 @@ zircon_regressions$geo = factor(zircon_regressions$geo, levels = c("tetragonal",
 # same thing as above
 ```
 
-# Print regression results
 
-```{r print regressions}
-apatite_regressions |> 
-  select(parameter, geo, estimate) |> 
-  pivot_wider(names_from = geo, values_from = estimate, values_fn = mean) |>
-  knitr::kable(digits = 2, caption = "Apatite regression values.") |> 
-  kableExtra::kable_styling(full_width = FALSE, latex_options = "HOLD_position")
-
+```{r}
 zircon_regressions |> 
   select(parameter, geo, estimate) |> 
+    mutate(estimate = 1/estimate) |> 
   pivot_wider(names_from = geo, values_from = estimate, values_fn = mean) |> 
 knitr::kable(digits = 2, caption = "Zircon regression values.") |>
   kableExtra::kable_styling(full_width = FALSE, latex_options = "HOLD_position")
 ```
 
-
-# Plot regression 
-
-## Apatite 
-
-Volume 
-
-```{r volume}
-pva_zoomed <- apatite_regressions |> 
-  filter(parameter == "v") |> 
-  mutate(`2d_new` = `2d`/100000, 
-         `3d_new` = `3d`/100000) |>
-  arrange(geo) |> 
-  ggplot(aes(x = `2d_new`, y = `3d_new`, color = geo)) +
-  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
-  geom_abline(slope = 1, intercept = 0, size = 0.7) +
-  geom_point(size = 2, alpha = 0.7, shape = 16) +
-  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
-  scale_color_manual(values = apatite_geo_cols,
-                     breaks = c("hexagonal", "ellipsoid"), 
-                     labels = c("Hexagonal", "Ellipsoid")) +
-  coord_cartesian(xlim = c(0,15), ylim = c(0, 15)) +
-  scale_x_continuous(breaks = seq(0, 15, 3)) +
-  scale_y_continuous(breaks = seq(0, 15, 3)) +
-  labs(x = TeX("2D Volume ($\\cdot 10^5$ $\\mu m^3$)"), 
-       y= TeX("3D Volume ($\\cdot 10^5$ $\\mu m^3$)")) +
-  theme_nanoct()
-
-pva_full <- apatite_regressions |> 
-  filter(parameter == "v") |> 
-  mutate(`2d_new` = `2d`/100000, 
-         `3d_new` = `3d`/100000) |>
-  arrange(geo) |> 
-  ggplot(aes(x = `2d_new`, y = `3d_new`, color = geo)) +
-  geom_abline(pd_v, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
-  geom_abline(slope = 1, intercept = 0, size = 0.7) +
-  geom_point(size = 1, alpha = 0.7, shape = 16) +
-  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
-  scale_color_manual(values = apatite_geo_cols,
-                     breaks = c("hexagonal", "ellipsoid"), 
-                     labels = c("Hexagonal", "Ellipsoid")) +
-  theme(panel.grid = element_blank(), 
-        legend.position = "none", 
-        plot.title = element_blank(),
-        axis.title = element_blank(),
-        axis.ticks.length = unit(-0.15, "cm"),
-        axis.ticks = element_line(color = "black"),
-        axis.text = element_text(size = 7),
-        panel.border = element_rect(size = 1, color = "black")) +
-  annotate('rect', xmin = 0, ymin = 0, xmax = 15, ymax = 15, size = 0.5, fill = 'transparent', color = "black") +
-  coord_cartesian(xlim = c(0,50), ylim = c(0, 50)) +
-  scale_x_continuous(breaks = seq(0, 50, 15)) +
-  scale_y_continuous(breaks = seq(0, 50, 15)) 
-
-pva <- pva_zoomed + inset_element(pva_full, 
-                          left = 0.01, 
-                          bottom = 0.57, 
-                          right = 0.42, 
-                          top = 0.99)
-pva
-```
-
-Mean Ft
-
-```{r meanft}
-pftcomba <- apatite_regressions |> 
-  filter(parameter == "ftcomb") |> 
-  arrange(geo) |> 
-  ggplot(aes(x = `2d`, y = `3d`, color = geo)) +
-  geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
-  geom_abline(slope = 1, intercept = 0, size = 0.7) +
-  geom_point(size = 2, alpha = 0.7, shape = 16) +
-  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
-  scale_x_continuous(limits = c(0.47, 0.87),
-                     expand = c(0.0, 0.0),
-                     breaks = c(0.5, 0.6, 0.7, 0.8),
-                     labels = c(0.5, 0.6, 0.7, 0.8)) +
-  scale_y_continuous(limits = c(0.47, 0.87),
-                     expand = c(0.0, 0.0),
-                     breaks = c(0.5, 0.6, 0.7, 0.8),
-                     labels = c(0.5, 0.6, 0.7, 0.8)) +
-  scale_color_manual(values = apatite_geo_cols, 
-                     breaks = c("hexagonal", "ellipsoid"), 
-                     labels = c("Hexagonal", "Ellipsoid")) +
-  labs(x = TeX("2D $F_T$"), 
-       y= TeX("3D $F_T$")) +
-  theme_nanoct()
-
-pftcomba
-```
-
-R_Ft
-
-```{r rft}
-prfta <- apatite_regressions |> 
-  filter(parameter == "rft") |> 
-  arrange(geo) |> 
-  ggplot(aes(x = `2d`, y = `3d`, color = geo)) +
-  geom_abline(pd_ft, mapping = aes(slope = s, intercept = i), size = 0.2, linetype = 2, alpha = 0.7) +
-  geom_abline(slope = 1, intercept = 0, size = 0.7) +
-  geom_point(size = 2, alpha = 0.7, shape = 16) +
-  geom_smooth(method = "lm", formula = "y ~ 0 + x", se = FALSE, size = 1.2) +
-  scale_color_manual(values = apatite_geo_cols, 
-                     breaks = c("hexagonal", "ellipsoid"), 
-                     labels = c("Hexagonal", "Ellipsoid")) +
-   scale_x_continuous(limits = c(22, 93),
-                     expand = c(0.01, 0.01),
-                     breaks = c(30, 50, 70, 90),
-                     labels = c(30, 50, 70, 90)) +
-  scale_y_continuous(limits = c(22, 93),
-                     expand = c(0.01, 0.01),
-                     breaks = c(30, 50, 70, 90),
-                     labels = c(30, 50, 70, 90)) +
-  labs(x = TeX("2D $R_{FT}$"), 
-       y= TeX("3D $R_{FT}$")) +
-  theme_nanoct()
-
-prfta
-```
 
 ## Zircon
 
@@ -400,25 +224,13 @@ prftz <- zircon_regressions |>
 prftz
 ```
 
+
 # Print uncertainty results
 
 ```{r print uncertainties}
-apatite_regressions |> 
-  select(parameter, pdiff, size_cat, geo) |> 
-  mutate(size = case_when(parameter == "ftcomb" & geo == "hexagonal" ~ as.character(size_cat), 
-                          TRUE ~ "all sizes"), 
-         size = factor(size, levels = c("medium", "large", "all sizes")), 
-         geo = factor(geo, levels = c("hexagonal", "ellipsoid"))) |> 
-  group_by(parameter, geo, size) |> 
-  summarize(uncert = round(sd(pdiff),0)) |> 
-  mutate(uncert = paste0(uncert, "%")) |> 
-  arrange(parameter, geo, size) |> 
-  knitr::kable(caption = "Apatite uncertainty values.") |>
-  kableExtra::kable_styling(full_width = FALSE)
-
 zircon_regressions |> 
   select(parameter, pdiff, size_cat, geo) |> 
-  mutate(size = case_when(parameter == "ftcomb" & geo == "tetragonal" ~ as.character(size_cat), 
+  mutate(size = case_when(parameter == str_match(parameter, "^ft(comb|\\d{3})$")[,1] & geo == "tetragonal" ~ as.character(size_cat), 
                           TRUE ~ "all sizes"), 
          size = factor(size, levels = c("medium", "large", "all sizes")), 
          geo = factor(geo, levels = c("tetragonal", "ellipsoid"))) |> 
@@ -430,101 +242,18 @@ zircon_regressions |>
 
 ```
 
+
 # Plot uncertainty 
 
 Create plotting dataframe
 ```{r uncert df}
-apatite_uncertainty_df <- apatite_regressions |> 
-  select(parameter, pdiff, size_cat, geo, w_max) |> 
-  mutate(size = case_when(parameter == str_match(parameter, ".?ft(.+)?")[,1] & geo == "hexagonal" ~ as.character(size_cat), 
-                          TRUE ~ "all sizes"), 
-         size = factor(size, levels = c("all sizes", "medium", "large")), 
-         geo = factor(geo, levels = c("hexagonal", "ellipsoid"))) |> 
-  arrange(desc(size))
-
 zircon_uncertainty_df <- zircon_regressions |> 
   select(parameter, pdiff, size_cat, geo, w_max) |> 
-  mutate(size = case_when(parameter == str_match(parameter, ".?ft(.+)?")[,1] & geo == "tetragonal" ~ as.character(size_cat), 
+  mutate(size = case_when(geo == "tetragonal" & str_detect(parameter, "^ft") == TRUE ~ as.character(size_cat), 
                           TRUE ~ "all sizes"), 
          size = factor(size, levels = c("all sizes", "medium", "large")), 
          geo = factor(geo, levels = c("tetragonal", "ellipsoid"))) |> 
-  #filter(str_detect(parameter, "^ft[1-9]{3}")) |> 
   arrange(desc(size))
-```
-
-## Apatite
-
-Volume
-
-```{r volume}
-uncert_pva <- apatite_uncertainty_df |> 
-  filter(parameter == "v") |> 
-  arrange(geo) |> 
-  ggplot(aes(x = w_max, y = pdiff, color = geo)) +
-  scale_color_manual(values = apatite_geo_cols, 
-                     labels = c("Hexagonal", "Ellipsoid")) +
-  geom_abline(slope = 0, intercept = 0, size = 1) +
-  geom_point(size = 1.5) +
-  labs(x = "Maximum Width", 
-       y = "Volume Residuals (% diff.)") +
-  coord_cartesian(ylim=c(-90, 60)) +
-  scale_y_continuous(breaks = c(-90, -60, -30, 0, 30, 60), 
-                     labels = function(x) paste0(x, "%")) +
-  theme_uncert()
-
-uncert_pva
-```
-
-Mean Ft
-
-```{r meanft}
-uncert_pftcomba <- apatite_uncertainty_df |> 
-  filter(parameter == "ftcomb") |> 
-  arrange(geo) |> 
-  ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
-  scale_color_manual(values = c(large = "#2D728F", medium = "#2D728F", `all sizes` = "#D5920B"),
-                     guide = "none") +
-  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
-                     labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
-  scale_fill_manual(values = c(large = "#2D728F", medium= "#2D728F", `all sizes` = "#D5920B"),
-                    labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
-  geom_abline(slope = 0, intercept = 0, size =1) +
-  geom_point(size = 1.5) +
-  labs(x = "Maximum Width", 
-       y = TeX("F$_T$ Residuals (% diff.)")) +
-  coord_cartesian(ylim=c(-30, 30)) +
-  scale_y_continuous(breaks = c(-30, -15, 0, 15, 30),
-                     labels = function(x) paste0(x, "%")) +
-  theme_uncert() +
-  theme(legend.position = c(0.75,0.19))
-
-uncert_pftcomba
-```
-
-R_Ft
-
-```{r rft}
-uncert_prfta <- apatite_uncertainty_df |> 
-  filter(parameter == "rft") |> 
-  arrange(geo) |> 
- ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
-  scale_color_manual(values = c(large = "#2D728F", medium = "#2D728F", `all sizes` = "#D5920B"),
-                     guide = "none") +
-  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
-                     labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
-  scale_fill_manual(values = c(large = "#2D728F", medium= "#2D728F", `all sizes` = "#D5920B"),
-                    labels = c("Hexagonal- Small and\nMedium", "Hexagonal- Large", "Ellipsoid")) +
-  geom_abline(slope = 0, intercept = 0, size =1) +
-  geom_point(size = 1.5) +
- labs(x = "Maximum Width", 
-       y = TeX("R$_{FT}$ Residuals (% diff.)")) +
-  coord_cartesian(ylim=c(-30, 30)) +
-  scale_y_continuous(breaks = c(-30, -15, 0, 15, 30),
-                     labels = function(x) paste0(x, "%")) +
-  theme_uncert() +
-  theme(legend.position = c(0.75,0.19))
-
-uncert_prfta
 ```
 
 ## Zircon
@@ -535,7 +264,7 @@ uncert_pvz <- zircon_uncertainty_df |>
   filter(parameter == "v") |> 
   arrange(geo) |> 
   ggplot(aes(x = w_max, y = pdiff, color = geo)) +
-  scale_color_manual(values = zircon_geo_cols, 
+   scale_color_manual(values = zircon_geo_cols, 
                      labels = c("Tetragonal", "Ellipsoid")) +
   geom_abline(slope = 0, intercept = 0, size = 1) +
   geom_point(size = 1.5) +
@@ -544,7 +273,7 @@ uncert_pvz <- zircon_uncertainty_df |>
   coord_cartesian(ylim=c(-90, 60)) +
   scale_y_continuous(breaks = c(-90, -60, -30, 0, 30, 60), 
                      labels = function(x) paste0(x, "%")) +
-  theme_uncert()
+  theme_uncert() 
 
 uncert_pvz
 ```
@@ -556,12 +285,12 @@ uncert_ftcombz <- zircon_uncertainty_df |>
   filter(parameter == "ftcomb") |> 
   arrange(desc(size)) |> 
   ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
-  scale_color_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"),
+  scale_color_manual(values = c(medium = "#5A8958", large = "#5A8958", `all sizes` = "#994C84"),
                      guide = "none") +
-  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
-                     labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
-  scale_fill_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"), 
-                    labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
+  scale_shape_manual(values = c(medium = 21, large = 5, `all sizes` = 21),
+                     labels = c("Tetragonal- Medium", "Tetragonal- Large", "Ellipsoid")) +
+  scale_fill_manual(values = c(medium = "#5A8958", large = "#5A8958", `all sizes` = "#994C84"), 
+                    labels = c("Tetragonal- Medium", "Tetragonal- Large", "Ellipsoid")) +
   geom_abline(slope = 0, intercept = 0, size = 1) +
   geom_point(size = 1.5) +
   labs(x = "Maximum Width", 
@@ -581,13 +310,9 @@ R_Ft
 uncert_prftz <- zircon_uncertainty_df |> 
   filter(parameter == "rft") |> 
   arrange(geo) |> 
-   ggplot(aes(x = w_max, y = pdiff, color = size, shape = size, fill = size)) +
-  scale_color_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"),
-                     guide = "none") +
-  scale_shape_manual(values = c(medium = 21, large = 23, `all sizes` = 21),
-                     labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
-  scale_fill_manual(values = c(medium = "#517048", large = "#517048", `all sizes` = "#C84167"), 
-                    labels = c("Tetragonal- Small and\nMedium", "Tetragonal- Large", "Ellipsoid")) +
+   ggplot(aes(x = w_max, y = pdiff, color = geo)) +
+  scale_color_manual(values = zircon_geo_cols, 
+                     labels = c("Tetragonal", "Ellipsoid")) +
   geom_abline(slope = 0, intercept = 0, size = 1) +
   geom_point(size = 1.5) +
   labs(x = "Maximum Width", 
@@ -595,74 +320,23 @@ uncert_prftz <- zircon_uncertainty_df |>
   coord_cartesian(ylim=c(-30, 30)) +
   scale_y_continuous(breaks = c(-30, -15, 0, 15, 30),
                      labels = function(x) paste0(x, "%")) +
-  theme_uncert() +
-  theme(legend.position = c(0.75,0.19))
+  theme_uncert() 
 
 uncert_prftz
 ```
 
-Print plots #7 and #8 
-
-```{r print}
-(pva / pftcomba / prfta) | (uncert_pva / uncert_pftcomba / uncert_prfta) 
+```{r}
 (pvz / pftcombz / prftz) | (uncert_pvz / uncert_ftcombz / uncert_prftz)
-```
-
-# Size Distribution Figure 
-
-## Apatite 
-
-```{r ap_sizedist, dpi = 300}
-size_dist <- readxl::read_xlsx("data/size-distribution.xlsx")
-
-polygon.small <- as.data.frame(cbind(c(40, 40, 45, 50, 50, 45), 
-                                     c(0, 3, 9, 9, 0, 0)))
-
-polygon.medium <- as.data.frame(cbind(
-  c(50, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 100, 50), 
-  c(0, 9, 15, 21, 27, 29, 29, 21, 21, 16, 12, 11, 0, 0)))
-
-polygon.large <- as.data.frame(cbind(
-  c(100, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170, 175, 180, 185, 190, 195, 200,200, 100), 
-  c(0, 11, 10,  4,  3,  3,  4,  3,  3,  4,  6,  2,  0,  2,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0)))
-
-size_dist_apatite <- size_dist |> 
-  filter(a_obs_w_max < 200 & a_obs_w_max > 40) |> 
-  select(a_obs_w_max)
-
-p_sizedist_ap <- ggplot(size_dist_apatite) +
-  geom_area(stat= "bin", fill= "grey90", binwidth = 5, mapping = aes(x = a_obs_w_max)) +
-  geom_area(apatite_raw, stat = "bin", fill = "transparent", color = "black", binwidth = 5, mapping = aes(x = w_max)) +
-  geom_polygon(polygon.small, mapping = aes(x = V1, y = V2), fill = "grey10", alpha = 0.5) +
-  geom_polygon(polygon.medium, mapping = aes(x = V1, y = V2), fill = "maroon", alpha = 0.5) +
-  geom_polygon(polygon.large, mapping = aes(x = V1, y = V2), fill = "darkgreen", alpha = 0.5) +
-  scale_x_continuous(breaks = seq(40, 200, 20)) +
-  scale_y_continuous(breaks = seq(0, 100, 20), 
-                     limits = c(0, 100)) +
-  labs(x = TeX("Maximum Width ($\\mu$m)"), y = "Number of Apatite Grains") +
-  theme(panel.grid.major = element_blank(), 
-        axis.text = element_text(size = 6), 
-        axis.title = element_text(size = 9)) +
-    annotate("text", x = 42, y = 15, label = "N = 17") + #small
-    geom_segment(x = 42, xend = 45, y = 13, yend = 10) + #small
-    annotate("text", x = 75, y = 15, label = "N = 205") + #average
-    annotate("text", x = 120, y = 15, label = "N = 45") + #large
-    geom_segment(x = 120, xend = 125, y = 13, yend = 5) + #large
-    annotate("text", x = 90, y = 40, label = "N = 1061") 
-  
-p_sizedist_ap
-
-#g <- ggplot_build(p_sizedist_ap)$data[[1]]
-
-apatite_raw |> 
-  group_by(size_cat) |> 
-  count()
 
 ```
 
+# Size Distribution 
 ### Figure 3b 
 
 ```{r fig3b, echo = FALSE}
+size_dist <- readxl::read_xlsx("data/20220718_size-distribution.xlsx")
+
+
 polygon.small <- as.data.frame(cbind(c(30, 35, 40, 45, 50, 50, 30), 
                                      c(0, 1, 2, 7, 5, 0, 0)))
 
@@ -679,23 +353,29 @@ size_dist_zircon <- size_dist |>
   select(z_obs_w_max)
 
 p_sizedist_zr <- ggplot(size_dist_zircon) +
-  geom_area(stat= "bin", fill= "grey90", binwidth = 5, mapping = aes(x = z_obs_w_max)) +
+  geom_area(stat= "bin", fill= "grey90", color = "black", size = 0.25, binwidth = 5, mapping = aes(x = z_obs_w_max)) +
    geom_area(zircon_raw, stat = "bin", fill = "transparent", color = "black", binwidth = 5, mapping = aes(x = w_max)) +
   geom_polygon(polygon.small, mapping = aes(x = V1, y = V2), fill = "grey10", alpha = 0.5) +
   geom_polygon(polygon.medium, mapping = aes(x = V1, y = V2), fill = "maroon", alpha = 0.5) +
   geom_polygon(polygon.large, mapping = aes(x = V1, y = V2), fill = "darkgreen", alpha = 0.5) +
-  scale_x_continuous(breaks = seq(30, 200, 20)) +
+  scale_x_continuous(limits = c(30, 200), 
+                     breaks = seq(30, 200, 20), 
+                     labels = c(40, 60, 80, 100, 120, 140, 160, 180, 200)) +
   scale_y_continuous(breaks = seq(0, 100, 20), 
                      limits = c(0,100)) +
   labs(x = TeX("Maximum Width ($\\mu$m)"), y = "Number of Zircon Grains") +
-  theme(panel.grid.major = element_blank(), 
-        axis.text = element_text(size = 6), 
+  theme(panel.grid.major = element_blank(),
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 8), 
+        axis.ticks.length = unit(-0.15, "cm"),
+        axis.ticks = element_line(color = "black"),
+        panel.border = element_rect(size = 1, color = "black"),
         axis.title = element_text(size = 9)) +
   annotate("text", x = 35, y = 10, label = "N = 13") + #small
   geom_segment(x = 34, xend = 40, y = 8, yend = 5) + #small
   annotate("text", x = 80, y = 10, label = "N = 150") + #average
   annotate("text", x = 130, y = 10, label = "N = 63") + #large
-  geom_segment(x = 129, xend = 133, y = 8, yend = 5) + #large
+  geom_segment(x = 133, xend = 129, y = 8, yend = 5) + #large
   annotate("text", x = 80, y = 40, label = "N = 736") 
 
 p_sizedist_zr
@@ -707,13 +387,7 @@ zircon_raw |>
   group_by(size_cat) |> 
   count()
 ```
-Size distribution for zircon
 
-```{r print}
-p_sizedist_ap + p_sizedist_zr + plot_annotation(tag_levels = 'A')
-```
-
-## Figure S1
 ```{r figs1}
 # apatite
 a_base<- apatite_raw |> select(gem, sample, w_max) |> separate(sample, into = c("sample_name", "mount", "num"), sep = ",") |>  select(sample_name, gem, w_max) 
@@ -747,8 +421,6 @@ z_base |>
   geom_density(size_dist_zircon, mapping = aes(x = z_obs_w_max)) +
   facet_wrap(~gem)
 ```
-
-
 
 #----------------------- For easy analysis/visualization----------------#
 
@@ -1262,4 +934,5 @@ uncertainty_plot %+%
         strip.text = element_text(colour = "black"), 
         panel.grid.minor = element_blank())
 ```
+
 

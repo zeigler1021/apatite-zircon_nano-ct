@@ -31,3 +31,17 @@ packrat/src/
 
 # exclude figures 
 figures/
+hecalc/
+imports/
+data/20220704_zircon-data.xlsx
+data/TRaIL_All_Apatites_HeCalcInput.xlsx
+data/TRaIL_All_Zircons_HeCalcInput.xlsx
+output/20220926_old-version-and-zircon.zip
+hecalc-data-cleaning.Rmd
+copernicus_template/
+data/20220816_comparisons-other-studies.xlsx
+data/20220804_apatite-anova-comps
+zircon-nano-ct 
+zeigler-et-al_2022
+
+ 
