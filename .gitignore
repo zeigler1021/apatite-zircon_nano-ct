@@ -2,6 +2,7 @@
 
 # exclude output files
 *.html
+*.docx
 
 # OS generated files
 .DS_Store
@@ -41,7 +42,5 @@ hecalc-data-cleaning.Rmd
 copernicus_template/
 data/20220816_comparisons-other-studies.xlsx
 output/20220804_apatite-anova-comps.csv
-zircon-nano-ct.Rmd 
-zeigler-et-al_2022.docx
+zircon-nano-ct.Rmd
 
- 
